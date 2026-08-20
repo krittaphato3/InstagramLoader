@@ -1,7 +1,9 @@
 """Pydantic schemas shared by the HTTP API.
 
-These mirror the documented request/response contract in the README so the
-frontend and backend stay in sync without drifting.
+Posts are grouped: one PostOut = one Instagram post, containing one or more
+media items (a carousel's children become items inside a single post). The
+resolve response is paginated so a profile with hundreds of posts loads its
+first page quickly and streams the rest on demand.
 """
 from __future__ import annotations
 
@@ -35,18 +37,36 @@ class ResolveRequest(BaseModel):
 
 
 class ItemOut(BaseModel):
-    """A single media item returned by /api/resolve."""
+    """A single media file inside a post (one row of a carousel)."""
 
     id: str
-    type: MediaType
-    thumbnail_url: Optional[str] = None
     media_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    is_video: Optional[bool] = None
+    type: Optional[MediaType] = None  # populated by fallback helpers; grouped posts carry it on PostOut instead
+    # The fallback (embed/oEmbed) path still attaches post-level metadata here;
+    # `_items_to_posts` copies these onto the grouped PostOut.
     caption: Optional[str] = None
     timestamp: Optional[str] = None
     source_url: Optional[str] = None
     likes: Optional[int] = None
     comments: Optional[int] = None
-    is_video: Optional[bool] = None
+
+
+class PostOut(BaseModel):
+    """One Instagram post (image, video/reel, or multi-item carousel)."""
+
+    id: str  # shortcode
+    type: MediaType  # post | reel | story
+    caption: Optional[str] = None
+    timestamp: Optional[str] = None
+    source_url: Optional[str] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
+    is_video: Optional[bool] = None  # True for a standalone reel
+    media_count: int = 1
+    thumbnail_url: Optional[str] = None  # first item's thumbnail (grid tile)
+    items: List[ItemOut] = Field(default_factory=list)
 
 
 class ProfileInfo(BaseModel):
@@ -63,18 +83,21 @@ class ProfileInfo(BaseModel):
 
 
 class ResolveResponse(BaseModel):
-    """POST /api/resolve response."""
+    """POST /api/resolve response (first page) + GET .../more (next page)."""
 
+    session_id: Optional[str] = None
     input_type: InputType
     username: Optional[str] = None
     profile: Optional[ProfileInfo] = None
-    items: List[ItemOut] = Field(default_factory=list)
-    stories: List[ItemOut] = Field(default_factory=list)
-    stories_status: Optional[str] = None  # "ok" | "login_required" | "none" | "unavailable"
+    posts: List[PostOut] = Field(default_factory=list)
+    stories: List[PostOut] = Field(default_factory=list)
+    stories_status: Optional[str] = None
+    has_more: bool = False
+    page: int = 0
 
 
 class DownloadItem(BaseModel):
-    """One selected item sent to /api/download."""
+    """One selected media file sent to /api/download (a flattened item)."""
 
     id: str
     type: MediaType
@@ -109,7 +132,7 @@ class SingleDownloadRequest(BaseModel):
 
 
 class StatusResponse(BaseModel):
-    """GET /api/status/{job_id} response (also returned by /api/status)."""
+    """GET /api/status/{job_id} response."""
 
     job_id: str
     status: str

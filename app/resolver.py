@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -43,7 +44,26 @@ from .errors import (
     RateLimitError,
     UnsupportedURLError,
 )
-from .models import InputType, ItemOut, MediaType, ProfileInfo, ResolveResponse
+from .models import (
+    InputType,
+    ItemOut,
+    MediaType,
+    PostOut,
+    ProfileInfo,
+    ResolveResponse,
+)
+
+PAGE_SIZE = 12
+
+
+@dataclass
+class _Session:
+    """A cached profile fetch used by paginated resolution."""
+
+    username: str
+    profile: instaloader.Profile
+    posts_iter: object  # iterator over the profile's posts
+    page: int = 0
 
 # Match /p/ABC123 or /reel/ABC123 (also /reels/).
 _SHORTCODE_RE = re.compile(r"/(?:p|reel|reels)/([A-Za-z0-9_-]{3,})")
@@ -131,6 +151,8 @@ class Resolver:
         # instaloader keeps a shared session that we must not race.
         self._il_lock = threading.Lock()
         self._il = None
+        # Paginated resolve keeps an open post iterator per "session id".
+        self._sessions: dict[str, _Session] = {}
 
     def close(self) -> None:
         self._client.close()
@@ -143,12 +165,72 @@ class Resolver:
         if result is not None:
             return result
 
-        # Fallback: official public embed/oEmbed endpoints.
+        # Fallback: official public embed/oEmbed endpoints (return flat items,
+        # which we group into posts here so the API stays consistent).
         if cls.kind in (InputType.post, InputType.reel):
             items, username = self._resolve_single(cls)
-            return ResolveResponse(input_type=cls.kind, username=username or cls.username, items=items)
+            return ResolveResponse(
+                input_type=cls.kind,
+                username=username or cls.username,
+                posts=self._items_to_posts(items),
+                stories_status="none",
+            )
         items = self._resolve_profile(cls)
-        return ResolveResponse(input_type=cls.kind, username=cls.username, items=items)
+        return ResolveResponse(
+            input_type=cls.kind,
+            username=cls.username,
+            posts=self._items_to_posts(items),
+        )
+
+    @staticmethod
+    def _items_to_posts(items: List[ItemOut]) -> List[PostOut]:
+        """Group flat fallback items (which may already be 1-per-post) into posts."""
+        # The fallback returns one ItemOut per post; wrap each as a 1-item post.
+        posts: List[PostOut] = []
+        for it in items:
+            posts.append(
+                PostOut(
+                    id=it.id,
+                    type=MediaType.post,
+                    caption=it.caption,
+                    timestamp=it.timestamp,
+                    source_url=it.source_url,
+                    likes=it.likes,
+                    comments=it.comments,
+                    is_video=it.is_video,
+                    media_count=1,
+                    thumbnail_url=it.thumbnail_url,
+                    items=[ItemOut(id=it.id, media_url=it.media_url, thumbnail_url=it.thumbnail_url, is_video=it.is_video)],
+                )
+            )
+        return posts
+
+    def resolve_more(self, session_id: str) -> ResolveResponse:
+        """Return the next page of posts for a previously opened profile."""
+        with self._il_lock:
+            sess = self._sessions.get(session_id)
+        if sess is None:
+            raise InvalidInputError("Session expired. Please search again.")
+        posts: List[PostOut] = []
+        try:
+            for post in sess.posts_iter:
+                grouped = self._post_to_grouped(post, MediaType.post)
+                if grouped is not None:
+                    posts.append(grouped)
+                if len(posts) >= PAGE_SIZE:
+                    break
+        except instaloader.InstaloaderException:
+            pass
+        sess.page += 1
+        has_more = len(posts) == PAGE_SIZE  # may be more; best-effort flag
+        return ResolveResponse(
+            session_id=session_id,
+            input_type=InputType.profile,
+            username=sess.username,
+            posts=posts,
+            page=sess.page,
+            has_more=has_more,
+        )
 
     # ------------------------------------------------------------------ #
     # Primary backend: instaloader
@@ -178,29 +260,49 @@ class Resolver:
                 post = instaloader.Post.from_shortcode(loader.context, cls.shortcode or "")
                 if post is None:
                     raise DeletedError()
-                items = self._post_to_items(post, MediaType.reel if cls.kind is InputType.reel else MediaType.post)
+                ptype = MediaType.reel if cls.kind is InputType.reel else MediaType.post
+                grouped = self._post_to_grouped(post, ptype)
                 return ResolveResponse(
                     input_type=cls.kind,
                     username=post.owner_username or cls.username,
                     profile=self._profile_info_from_post(post),
-                    items=items,
+                    posts=[grouped] if grouped else [],
                     stories_status="none",
                 )
 
             profile = instaloader.Profile.from_username(loader.context, cls.username or "")
-            items = []
-            for post in profile.get_posts():
-                items.extend(self._post_to_items(post, MediaType.post))
-                if len(items) >= 36:
+            # Cache the post iterator so the next page is cheap.
+            session_id = f"{cls.username}_{uuid.uuid4().hex[:8]}"
+            sess = _Session(
+                username=cls.username,
+                profile=profile,
+                posts_iter=profile.get_posts(),
+            )
+            with self._il_lock:
+                self._sessions[session_id] = sess
+
+            # Pull the first page now.
+            posts: List[PostOut] = []
+            for post in sess.posts_iter:
+                grouped = self._post_to_grouped(post, MediaType.post)
+                if grouped is not None:
+                    posts.append(grouped)
+                if len(posts) >= PAGE_SIZE:
                     break
+            sess.page = 1
+            has_more = len(posts) == PAGE_SIZE
+
             stories, stories_status = self._resolve_stories(loader, profile)
             return ResolveResponse(
+                session_id=session_id,
                 input_type=cls.kind,
                 username=cls.username,
                 profile=self._profile_info(profile),
-                items=items,
+                posts=posts,
                 stories=stories,
                 stories_status=stories_status,
+                has_more=has_more,
+                page=sess.page,
             )
         except instaloader.LoginRequiredException as exc:
             raise LoginRequiredError() from exc
@@ -223,7 +325,7 @@ class Resolver:
     # ------------------------------------------------------------------ #
     @staticmethod
     def _resolve_stories(loader, profile):
-        """Return (story_items, status). Story access usually needs login."""
+        """Return (story_posts, status). Story access usually needs login."""
         try:
             stories = list(loader.get_stories(userids=[profile.userid]))
         except instaloader.LoginRequiredException as exc:
@@ -231,22 +333,23 @@ class Resolver:
         except instaloader.InstaloaderException as exc:
             return [], "unavailable"
 
-        items = []
+        posts = []
         for story in stories:
             for it in story.get_items():
                 media = it.video_url or it.url
-                items.append(
-                    ItemOut(
+                is_video = bool(getattr(it, "video_url", None)) or it.is_video
+                posts.append(
+                    PostOut(
                         id=str(it.mediaid),
                         type=MediaType.story,
-                        thumbnail_url=it.url,
-                        media_url=media,
-                        caption=None,
                         timestamp=it.date_utc.isoformat() if it.date_utc else None,
-                        is_video=bool(getattr(it, "video_url", None)) or it.is_video,
+                        is_video=is_video,
+                        thumbnail_url=it.url,
+                        media_count=1,
+                        items=[ItemOut(id=str(it.mediaid), media_url=media, thumbnail_url=it.url, is_video=is_video)],
                     )
                 )
-        return items, ("ok" if items else "none")
+        return posts, ("ok" if posts else "none")
 
     # ------------------------------------------------------------------ #
     # Profile info
@@ -276,65 +379,63 @@ class Resolver:
             return None
 
     @staticmethod
-    def _post_to_items(post, default_type: MediaType) -> List[ItemOut]:
-        """Convert one instaloader Post (or its sidecar children) to items."""
-        base_id = post.shortcode or post.mediaid
+    def _post_to_grouped(post, default_type: MediaType) -> Optional[PostOut]:
+        """Convert one instaloader Post into a single grouped PostOut.
+
+        A carousel (GraphSidecar) becomes one post with one item per child;
+        a single image or video is one post with one item.
+        """
+        base_id = post.shortcode or str(post.mediaid)
         caption = post.caption
         timestamp = post.date_utc.isoformat() if post.date_utc else None
         source = f"https://www.instagram.com/p/{post.shortcode}/" if post.shortcode else None
         likes = getattr(post, "likes", None)
         comments = getattr(post, "comments", None)
 
-        # Sidecar (multi-image/video post) -> one item per child.
+        items: List[ItemOut] = []
         if getattr(post, "typename", "") == "GraphSidecar":
-            items = []
             for idx, node in enumerate(post.get_sidecar_nodes(), start=1):
-                media = (node.video_url or node.display_url) if node.is_video else (node.display_url)
+                media = (node.video_url or node.display_url) if node.is_video else node.display_url
                 if not media:
                     continue
-                # On Instagram, video children of a carousel are still viewed
-                # as videos; surface them under Reels so they are not hidden.
-                child_type = (
-                    MediaType.reel
-                    if (node.is_video and default_type is MediaType.post)
-                    else default_type
-                )
                 items.append(
                     ItemOut(
                         id=f"{base_id}_{idx}",
-                        type=child_type,
-                        thumbnail_url=node.display_url,
                         media_url=media,
-                        caption=caption if idx == 1 else None,
-                        timestamp=timestamp,
-                        source_url=source,
-                        likes=likes if idx == 1 else None,
-                        comments=comments if idx == 1 else None,
+                        thumbnail_url=node.display_url,
                         is_video=bool(node.is_video),
                     )
                 )
-            return items
-
-        # Single image or video.
-        is_video = bool(getattr(post, "is_video", False))
-        # On Instagram, a standalone video post is surfaced under the Reels tab
-        # (a real /reel/ shortcode rather than a picture post).
-        media_type = MediaType.reel if (is_video and default_type is MediaType.post) else default_type
-        media = post.video_url or post.url
-        return [
-            ItemOut(
-                id=base_id,
-                type=media_type,
-                thumbnail_url=post.url,
-                media_url=media,
-                caption=caption,
-                timestamp=timestamp,
-                source_url=source,
-                likes=likes,
-                comments=comments,
-                is_video=is_video,
+        else:
+            is_video = bool(getattr(post, "is_video", False))
+            media = post.video_url or post.url
+            items.append(
+                ItemOut(
+                    id=base_id,
+                    media_url=media,
+                    thumbnail_url=post.url,
+                    is_video=is_video,
+                )
             )
-        ]
+        if not items:
+            return None
+
+        is_post_video = any(it.is_video for it in items)
+        # A standalone video post or any video child is surfaced under Reels.
+        post_type = MediaType.reel if (is_post_video and default_type is MediaType.post) else default_type
+        return PostOut(
+            id=base_id,
+            type=post_type,
+            caption=caption,
+            timestamp=timestamp,
+            source_url=source,
+            likes=likes,
+            comments=comments,
+            is_video=is_post_video,
+            media_count=len(items),
+            thumbnail_url=items[0].thumbnail_url,
+            items=items,
+        )
 
     # ------------------------------------------------------------------ #
     # Single post / reel

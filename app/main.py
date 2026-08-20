@@ -62,6 +62,15 @@ def resolve(body: ResolveRequest) -> ResolveResponse:
     return resolver.resolve(body.input)
 
 
+@app.post("/api/resolve/more", response_model=ResolveResponse)
+def resolve_more(body: ResolveRequest) -> ResolveResponse:
+    """Return the next page of posts for an open profile session.
+
+    `body.input` carries the session_id returned by the first /api/resolve.
+    """
+    return resolver.resolve_more(body.input)
+
+
 @app.post("/api/download", response_model=DownloadResponse)
 def start_download(body: DownloadRequest) -> DownloadResponse:
     """Create a download job for the selected items and return its id."""

@@ -3,88 +3,114 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <title>Instagram Media Downloader</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- Top navigation (Instagram-style search bar) -->
+  <!-- Top nav (Instagram-style) -->
   <nav id="navbar">
-    <div class="brand" id="brand">IG <span>Downloader</span></div>
+    <div class="brand" id="brand">Instagram Downloader</div>
     <div class="searchbar">
       <input
         id="searchInput"
         type="text"
-        placeholder="Search accounts or paste a post / reel link…"
+        placeholder="Search"
         autocomplete="off"
         aria-label="Search Instagram or paste a link"
       />
-      <button id="searchBtn" class="primary">Search</button>
+      <button id="searchBtn" class="ghost" aria-label="Search">🔍</button>
     </div>
     <button id="themeBtn" class="icon-btn" title="Toggle dark mode">🌙</button>
   </nav>
 
-  <!-- Status / error / empty area -->
+  <!-- Status / notices -->
   <div id="statusArea"></div>
 
-  <!-- Landing / empty state (before any search) -->
+  <!-- Landing / empty state -->
   <section id="home" class="home">
-    <h2>Instagram Media Downloader</h2>
-    <p>Search an account, paste a post/reel link, then download public media in an organized ZIP — just like Instagram.</p>
+    <h1>Instagram Media Downloader</h1>
+    <p>Search an account, paste a post / reel link, then download public media in an organized ZIP.</p>
     <form id="quickForm">
       <input id="homeInput" type="text" placeholder="Try a username, e.g. ssanldyy, or paste any Instagram link" />
-      <button class="primary" type="submit">Go</button>
+      <button class="primary" type="submit">Search</button>
     </form>
     <p class="disclaimer">Use this tool only for content you own or have permission to download. Respect copyright and Instagram’s terms.</p>
   </section>
 
-  <!-- Profile header (Instagram profile page) -->
+  <!-- Profile page (Instagram layout) -->
   <section id="profileView" class="profile" hidden>
     <div class="profile-header">
-      <img id="profileAvatar" alt="avatar" />
+      <div class="avatar-wrap">
+        <img id="profileAvatar" alt="avatar" />
+      </div>
       <div class="profile-meta">
-        <h2 id="profileUsername"></h2>
+        <div class="username-row">
+          <h2 id="profileUsername"></h2>
+          <button id="downloadAllBtn" class="primary sm">Download all</button>
+        </div>
         <div class="stats">
           <span><b id="statPosts">0</b> posts</span>
           <span><b id="statFollowers">0</b> followers</span>
           <span><b id="statFollowing">0</b> following</span>
         </div>
-        <p id="profileFullName" class="fullname"></p>
-        <p id="profileBio" class="bio"></p>
+        <div class="bio-block">
+          <p id="profileFullName" class="fullname"></p>
+          <p id="profileBio" class="bio"></p>
+        </div>
       </div>
     </div>
 
-    <!-- Media type tabs -->
-    <div class="tabs">
-      <button class="tab is-active" data-tab="all">All</button>
-      <button class="tab" data-tab="post">Posts</button>
-      <button class="tab" data-tab="reel">Reels</button>
-      <button class="tab" data-tab="story">Stories</button>
-    </div>
+    <!-- Story highlights row (circular bubbles) -->
+    <div id="highlightsRow" class="highlights" hidden></div>
 
-    <!-- Bulk select controls -->
-    <div class="bulkbar">
-      <label><input type="checkbox" id="selectAllCb" /> Select all visible</label>
-      <button id="downloadSelectedBtn" class="primary" disabled>Download selected (<span id="selectedCount">0</span>)</button>
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab is-active" data-tab="post">▦ Posts</button>
+      <button class="tab" data-tab="reel">▶ Reels</button>
+      <button class="tab" data-tab="story">◌ Stories</button>
     </div>
   </section>
 
-  <!-- Media grid -->
+  <!-- Media grid (3-col, Instagram-style) -->
   <div id="grid" class="grid" hidden></div>
 
-  <!-- Modal: full post/reel/story viewer -->
+  <!-- Load more sentinel -->
+  <div id="loadMore" class="load-more" hidden>
+    <button id="loadMoreBtn" class="ghost">Load more</button>
+  </div>
+
+  <!-- Post viewer modal (IG-style: media left, info right) -->
   <div id="modal" class="modal" hidden>
-    <div class="modal-content">
-      <button id="modalClose" class="icon-btn" aria-label="Close">✕</button>
-      <div id="modalMedia"></div>
-      <div id="modalInfo"></div>
-      <button id="modalDownload" class="primary">Download this media</button>
+    <button id="modalClose" class="icon-btn modal-close" aria-label="Close">✕</button>
+    <div class="modal-card">
+      <div id="modalMedia" class="modal-media"></div>
+      <div class="modal-side">
+        <div class="modal-author">
+          <img id="modalAvatar" alt="" />
+          <span id="modalUsername"></span>
+        </div>
+        <div id="modalInfo" class="modal-info"></div>
+        <div class="modal-actions">
+          <button id="modalDownload" class="primary">⬇ Download this media</button>
+          <label class="check-all"><input type="checkbox" id="modalSelectCb" /> Select this post</label>
+        </div>
+        <div id="modalChildren" class="modal-children" hidden></div>
+      </div>
     </div>
   </div>
 
-  <!-- Progress overlay for bulk download -->
+  <!-- Progress overlay -->
   <div id="progressOverlay" class="overlay" hidden>
     <progress id="progressBar" max="100" value="0"></progress>
     <p id="progressText">Preparing…</p>
+  </div>
+
+  <!-- Floating bulk bar -->
+  <div id="bulkBar" class="bulk-bar" hidden>
+    <span><b id="selCount">0</b> selected</span>
+    <button id="clearSelBtn" class="link">Clear</button>
+    <button id="downloadSelBtn" class="primary" disabled>Download selected</button>
   </div>
 
   <!-- Toasts -->
