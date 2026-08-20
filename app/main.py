@@ -24,6 +24,7 @@ from .config import ALLOWED_ORIGINS, DOWNLOAD_DIR, REQUEST_TIMEOUT, USER_AGENT
 from .downloader import download_item
 from .errors import AppError, DownloadError
 from .models import (
+    CookieRequest,
     DownloadItem,
     DownloadRequest,
     DownloadResponse,
@@ -69,6 +70,24 @@ def resolve_more(body: ResolveRequest) -> ResolveResponse:
     `body.input` carries the session_id returned by the first /api/resolve.
     """
     return resolver.resolve_more(body.input)
+
+
+@app.post("/api/cookie")
+def set_cookie(body: CookieRequest) -> dict:
+    """Store (or clear) the Instagram `sessionid` cookie the front end captured.
+
+    When present, instaloader uses it to fetch stories and private-followed
+    profiles. No password is ever sent or stored. Pass an empty sessionid to
+    clear.
+    """
+    cookie = {"sessionid": body.sessionid} if body.sessionid else None
+    resolver.set_cookie(cookie)
+    return {"ok": True, "authenticated": bool(cookie)}
+
+
+@app.get("/api/cookie")
+def get_cookie_status() -> dict:
+    return {"authenticated": bool(getattr(resolver, "_ig_cookie", None))}
 
 
 @app.post("/api/download", response_model=DownloadResponse)

@@ -8,20 +8,26 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <!-- Top nav (Instagram-style) -->
+  <!-- Top nav (Instagram-style, full-width bar with centered content) -->
   <nav id="navbar">
-    <div class="brand" id="brand">Instagram Downloader</div>
-    <div class="searchbar">
-      <input
-        id="searchInput"
-        type="text"
-        placeholder="Search"
-        autocomplete="off"
-        aria-label="Search Instagram or paste a link"
-      />
-      <button id="searchBtn" class="ghost" aria-label="Search">🔍</button>
+    <div class="nav-inner">
+      <div class="brand" id="brand">Instagram Downloader</div>
+      <div class="searchbar">
+        <input
+          id="searchInput"
+          type="text"
+          placeholder="Search"
+          autocomplete="off"
+          aria-label="Search Instagram or paste a link"
+        />
+        <button id="searchBtn" class="ghost" aria-label="Search">🔍</button>
+      </div>
+      <div class="nav-right">
+        <button id="cookieBtn" class="icon-btn" title="Sign in with Instagram cookie (enables stories)">🔑</button>
+        <button id="helpBtn" class="icon-btn" title="Keyboard shortcuts">⌨️</button>
+        <button id="themeBtn" class="icon-btn" title="Toggle dark mode">🌙</button>
+      </div>
     </div>
-    <button id="themeBtn" class="icon-btn" title="Toggle dark mode">🌙</button>
   </nav>
 
   <!-- Status / notices -->
@@ -111,6 +117,46 @@
     <span><b id="selCount">0</b> selected</span>
     <button id="clearSelBtn" class="link">Clear</button>
     <button id="downloadSelBtn" class="primary" disabled>Download selected</button>
+  </div>
+
+  <!-- Help popover (keyboard shortcuts) -->
+  <div id="helpPop" class="pop" hidden>
+    <button id="helpClose" class="icon-btn pop-close" aria-label="Close">✕</button>
+    <h3>Keyboard shortcuts</h3>
+    <table class="keys">
+      <tr><td><kbd>/</kbd></td><td>Focus the search box</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Search (when box focused)</td></tr>
+      <tr><td><kbd>A</kbd></td><td>Select / unselect all visible posts</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>Select the post under the cursor (hover a card first)</td></tr>
+      <tr><td><kbd>D</kbd></td><td>Download currently selected posts as a ZIP</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td>Close the post viewer / any popover</td></tr>
+      <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / next item in a carousel (post viewer)</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Jump to item N in a carousel</td></tr>
+    </table>
+  </div>
+
+  <!-- Cookie / sign-in modal -->
+  <div id="cookieModal" class="modal" hidden>
+    <div class="cookie-card">
+      <button id="cookieClose" class="icon-btn pop-close" aria-label="Close">✕</button>
+      <h3>Sign in with your Instagram cookie</h3>
+      <p class="muted">Optional. Enables <b>stories</b> and private accounts you follow. No password is stored — only your browser's <code>sessionid</code> cookie is sent.</p>
+      <ol class="steps">
+        <li>Open instagram.com in your browser and log in.</li>
+        <li>Open DevTools → Application → Cookies → <code>instagram.com</code>.</li>
+        <li>Copy the <b>Value</b> of the <code>sessionid</code> cookie.</li>
+        <li>Paste it below and click Save.</li>
+      </ol>
+      <label class="field">
+        <span>sessionid</span>
+        <textarea id="cookieInput" rows="2" placeholder="Paste your sessionid value here…"></textarea>
+      </label>
+      <div class="cookie-actions">
+        <button id="cookieSave" class="primary">Save</button>
+        <button id="cookieClear" class="ghost">Clear / sign out</button>
+      </div>
+      <p id="cookieHint" class="hint"></p>
+    </div>
   </div>
 
   <!-- Toasts -->

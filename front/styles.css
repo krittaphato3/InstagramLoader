@@ -34,20 +34,24 @@ body {
 img { display: block; }
 button { font-family: inherit; }
 
-/* ---------- Navbar ---------- */
+/* ---------- Navbar (full-width bar, centered inner content — IG style) ---------- */
 #navbar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 12px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   position: sticky;
   top: 0;
   z-index: 50;
+  width: 100%;
+}
+.nav-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
   max-width: 975px;
   margin: 0 auto;
 }
+.nav-right { display: flex; align-items: center; gap: 2px; }
 .brand { font-size: 1.25rem; font-weight: 800; cursor: pointer; letter-spacing: -0.3px; color: var(--text); }
 .searchbar { flex: 1; display: flex; gap: 6px; align-items: center; }
 .searchbar input {
@@ -421,6 +425,57 @@ button.link {
 }
 .toast-success { border-color: #2ecc71; }
 .toast-error { border-color: #ed4956; }
+
+/* ---------- Help popover ---------- */
+.pop {
+  position: fixed;
+  top: 64px;
+  right: 20px;
+  width: 320px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+  padding: 18px 20px;
+  z-index: 95;
+}
+.pop h3 { margin: 0 0 12px; font-size: 0.95rem; }
+.pop-close { position: absolute; top: 8px; right: 8px; font-size: 0.9rem; }
+.keys { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.keys td { padding: 6px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.keys td:first-child { width: 80px; white-space: nowrap; }
+kbd {
+  background: var(--hover); color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 6px;
+  font-size: 0.78rem; font-family: ui-monospace, monospace;
+}
+
+/* ---------- Cookie modal ---------- */
+.cookie-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 460px; max-width: 92vw;
+  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.cookie-card h3 { margin: 0 0 8px; font-size: 1.05rem; }
+.cookie-card .muted { color: var(--muted); font-size: 0.82rem; line-height: 1.5; margin: 0 0 14px; }
+.cookie-card .steps { margin: 0 0 16px; padding-left: 18px; font-size: 0.82rem; line-height: 1.6; }
+.cookie-card .field { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 14px; }
+.cookie-card .field span { display: block; margin-bottom: 4px; }
+.cookie-card textarea {
+  width: 100%; padding: 9px 11px; border: 1px solid var(--border);
+  border-radius: 8px; background: var(--bg); color: var(--text);
+  font-family: ui-monospace, monospace; font-size: 0.8rem; resize: vertical;
+}
+.cookie-card textarea:focus { border-color: var(--primary); outline: none; }
+.cookie-actions { display: flex; gap: 10px; }
+.cookie-card .hint { font-size: 0.78rem; margin-top: 12px; min-height: 1em; }
+.hint.ok { color: #2ecc71; }
+.hint.err { color: #ed4956; }
 
 @media (max-width: 736px) {
   .profile-header { gap: 20px; }

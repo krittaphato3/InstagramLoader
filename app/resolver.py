@@ -153,9 +153,25 @@ class Resolver:
         self._il = None
         # Paginated resolve keeps an open post iterator per "session id".
         self._sessions: dict[str, _Session] = {}
+        # Optional Instagram login cookie supplied by the user (only the
+        # `sessionid` cookie is needed). When set, stories become available
+        # and private profiles you follow resolve.
+        self._ig_cookie: Optional[dict] = None
 
     def close(self) -> None:
         self._client.close()
+
+    def set_cookie(self, cookie: Optional[dict]) -> None:
+        """Set or clear the Instagram session cookie used for authenticated fetches.
+
+        Only a {"sessionid": ...} dict is needed. Never store a password.
+        """
+        if cookie and not isinstance(cookie, dict):
+            raise InvalidInputError("cookie must be a dict, e.g. {sessionid: ...}")
+        # Drop the cached instaloader so the next fetch picks up the new cookie.
+        with self._il_lock:
+            self._ig_cookie = cookie or None
+            self._il = None
 
     def resolve(self, raw: str) -> ResolveResponse:
         cls = classify(raw)
@@ -238,7 +254,7 @@ class Resolver:
     def _loader(self):
         with self._il_lock:
             if self._il is None:
-                self._il = instaloader.Instaloader(
+                il = instaloader.Instaloader(
                     quiet=True,
                     download_pictures=False,
                     download_videos=False,
@@ -250,6 +266,11 @@ class Resolver:
                     post_metadata_txt_pattern="",
                     dirname_pattern="{username}",
                 )
+                # If the user supplied a session cookie, attach it so we can
+                # fetch stories and private-followed profiles anonymously.
+                if self._ig_cookie:
+                    il.context.update_cookies(self._ig_cookie)
+                self._il = il
             return self._il
 
     def _resolve_instaloader(self, cls: Classification) -> Optional[ResolveResponse]:
@@ -388,7 +409,14 @@ class Resolver:
         base_id = post.shortcode or str(post.mediaid)
         caption = post.caption
         timestamp = post.date_utc.isoformat() if post.date_utc else None
-        source = f"https://www.instagram.com/p/{post.shortcode}/" if post.shortcode else None
+        # Detect a true reel so we link to /reel/ instead of /p/.
+        raw_node_src = getattr(post, "_node", {}) or {}
+        is_clips = raw_node_src.get("product_type") == "clips"
+        source = (
+            f"https://www.instagram.com/reel/{post.shortcode}/"
+            if (post.shortcode and is_clips)
+            else (f"https://www.instagram.com/p/{post.shortcode}/" if post.shortcode else None)
+        )
         likes = getattr(post, "likes", None)
         comments = getattr(post, "comments", None)
 
@@ -421,8 +449,12 @@ class Resolver:
             return None
 
         is_post_video = any(it.is_video for it in items)
-        # A standalone video post or any video child is surfaced under Reels.
-        post_type = MediaType.reel if (is_post_video and default_type is MediaType.post) else default_type
+        # Instagram marks true Reels with product_type == "clips". Mixed
+        # carousels that contain a video child are still Posts (the modal
+        # plays the video item). Only promote to Reel when instaloader
+        # confirms it is a clips product, or when the caller asked for a reel.
+        is_reel = is_clips or default_type is MediaType.reel
+        post_type = MediaType.reel if is_reel else MediaType.post
         return PostOut(
             id=base_id,
             type=post_type,

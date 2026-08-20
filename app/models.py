@@ -36,6 +36,15 @@ class ResolveRequest(BaseModel):
     input: str = Field(..., min_length=1, description="Post link, reel link, profile link, or username")
 
 
+class CookieRequest(BaseModel):
+    """POST /api/cookie body: optional Instagram session cookie for authenticated fetches."""
+
+    sessionid: Optional[str] = Field(
+        None,
+        description="Value of the Instagram `sessionid` browser cookie. Enables stories & private-followed profiles.",
+    )
+
+
 class ItemOut(BaseModel):
     """A single media file inside a post (one row of a carousel)."""
 

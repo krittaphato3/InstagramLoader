@@ -52,8 +52,20 @@ const els = {
   clearSelBtn: document.getElementById("clearSelBtn"),
   downloadSelBtn: document.getElementById("downloadSelBtn"),
   brand: document.getElementById("brand"),
+  helpBtn: document.getElementById("helpBtn"),
+  helpPop: document.getElementById("helpPop"),
+  helpClose: document.getElementById("helpClose"),
+  cookieBtn: document.getElementById("cookieBtn"),
+  cookieModal: document.getElementById("cookieModal"),
+  cookieClose: document.getElementById("cookieClose"),
+  cookieInput: document.getElementById("cookieInput"),
+  cookieSave: document.getElementById("cookieSave"),
+  cookieClear: document.getElementById("cookieClear"),
+  cookieHint: document.getElementById("cookieHint"),
 };
 const modalState = { post: null, itemIdx: 0 };
+// Track which grid card the pointer is currently over, for hover-to-select.
+let hoveredCardId = null;
 
 /* ---------------- helpers ---------------- */
 function fmt(n) {
@@ -294,6 +306,8 @@ function renderGrid() {
     }
 
     card.addEventListener("click", () => openModal(p));
+    card.addEventListener("mouseenter", () => { hoveredCardId = p.id; });
+    card.addEventListener("mouseleave", () => { if (hoveredCardId === p.id) hoveredCardId = null; });
     els.grid.appendChild(card);
   }
 }
@@ -305,6 +319,27 @@ function toggleSelect(id, checked) {
   updateBulkBar();
   renderGrid();
 }
+function toggleSelectAllVisible() {
+  const posts = visiblePosts().filter((p) => p.type !== "story");
+  if (posts.length === 0) return;
+  const allSelected = posts.every((p) => state.selected.has(p.id));
+  if (allSelected) posts.forEach((p) => state.selected.delete(p.id));
+  else posts.forEach((p) => state.selected.add(p.id));
+  updateBulkBar();
+  renderGrid();
+  toast(allSelected ? "Cleared visible selection" : `Selected ${posts.length} posts (press A again to clear)`, "info");
+}
+function downloadSelected() {
+  const chosen = state.posts.filter((p) => state.selected.has(p.id));
+  const flat = [];
+  chosen.forEach((p) => {
+    p.items.forEach((c) => flat.push({
+      id: c.id, type: p.type, media_url: c.media_url,
+      source_url: p.source_url, caption: p.caption, timestamp: p.timestamp,
+    }));
+  });
+  if (flat.length) startBulk(flat, state.username);
+}
 function updateBulkBar() {
   const n = state.selected.size;
   els.selCount.textContent = String(n);
@@ -315,6 +350,63 @@ els.clearSelBtn.addEventListener("click", () => {
   state.selected = new Set();
   updateBulkBar();
   renderGrid();
+});
+
+/* ---------------- help popover ---------------- */
+els.helpBtn.addEventListener("click", () => { els.helpPop.hidden = !els.helpPop.hidden; });
+els.helpClose.addEventListener("click", () => { els.helpPop.hidden = true; });
+document.addEventListener("click", (e) => {
+  if (els.helpPop.hidden) return;
+  if (!els.helpPop.contains(e.target) && e.target !== els.helpBtn) els.helpPop.hidden = true;
+});
+
+/* ---------------- cookie / sign-in ---------------- */
+async function refreshCookieStatus() {
+  try {
+    const r = await fetch("/api/cookie");
+    const d = await r.json();
+    els.cookieBtn.style.opacity = d.authenticated ? "1" : "0.6";
+    els.cookieBtn.title = d.authenticated
+      ? "Signed in — stories enabled. Click to manage."
+      : "Sign in with Instagram cookie (enables stories)";
+  } catch {}
+}
+els.cookieBtn.addEventListener("click", () => {
+  els.cookieHint.textContent = "";
+  els.cookieHint.className = "hint";
+  els.cookieModal.hidden = false;
+});
+els.cookieClose.addEventListener("click", () => { els.cookieModal.hidden = true; });
+els.cookieModal.addEventListener("click", (e) => { if (e.target === els.cookieModal) els.cookieModal.hidden = true; });
+els.cookieSave.addEventListener("click", async () => {
+  const v = els.cookieInput.value.trim();
+  if (!v) { els.cookieHint.textContent = "Paste a sessionid value first."; els.cookieHint.className = "hint err"; return; }
+  try {
+    const r = await fetch("/api/cookie", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionid: v }),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || "Could not save cookie");
+    els.cookieHint.textContent = "Signed in. Stories are now available — switch to the Stories tab.";
+    els.cookieHint.className = "hint ok";
+    refreshCookieStatus();
+    toast("Signed in. Re-search to load stories.", "success");
+  } catch (err) {
+    els.cookieHint.textContent = friendly(err.message);
+    els.cookieHint.className = "hint err";
+  }
+});
+els.cookieClear.addEventListener("click", async () => {
+  await fetch("/api/cookie", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionid: null }),
+  });
+  els.cookieInput.value = "";
+  els.cookieHint.textContent = "Signed out. Stories will be unavailable again.";
+  els.cookieHint.className = "hint";
+  refreshCookieStatus();
+  toast("Signed out.", "info");
 });
 
 /* ---------------- modal / post viewer ---------------- */
@@ -396,11 +488,46 @@ function renderModal() {
 els.modalClose.addEventListener("click", () => { els.modal.hidden = true; });
 els.modal.addEventListener("click", (e) => { if (e.target === els.modal) els.modal.hidden = true; });
 document.addEventListener("keydown", (e) => {
-  if (els.modal.hidden || !modalState.post) return;
-  const p = modalState.post;
-  if (e.key === "Escape") { els.modal.hidden = true; }
-  else if (e.key === "ArrowLeft" && p.items.length > 1) { modalState.itemIdx = (modalState.itemIdx - 1 + p.items.length) % p.items.length; renderModal(); }
-  else if (e.key === "ArrowRight" && p.items.length > 1) { modalState.itemIdx = (modalState.itemIdx + 1) % p.items.length; renderModal(); }
+  // Modal-scoped shortcuts (carousel nav + close) take priority when open.
+  if (!els.modal.hidden && modalState.post) {
+    const p = modalState.post;
+    if (e.key === "Escape") { els.modal.hidden = true; return; }
+    if (e.key === "ArrowLeft" && p.items.length > 1) { modalState.itemIdx = (modalState.itemIdx - 1 + p.items.length) % p.items.length; renderModal(); return; }
+    if (e.key === "ArrowRight" && p.items.length > 1) { modalState.itemIdx = (modalState.itemIdx + 1) % p.items.length; renderModal(); return; }
+    if (p.items.length > 1 && /^[1-9]$/.test(e.key)) {
+      const idx = Number(e.key) - 1;
+      if (idx < p.items.length) { modalState.itemIdx = idx; renderModal(); }
+      return;
+    }
+    return;
+  }
+
+  // Close any popover with Escape.
+  if (e.key === "Escape") {
+    els.helpPop.hidden = true;
+    els.cookieModal.hidden = true;
+    return;
+  }
+
+  // Global shortcuts — only when not typing in a field.
+  const tag = (e.target.tagName || "").toLowerCase();
+  const inField = tag === "input" || tag === "textarea" || e.target.isContentEditable;
+  if (inField) {
+    if (e.key === "Enter" && e.target === els.searchInput) search();
+    return;
+  }
+
+  if (e.key === "/") { e.preventDefault(); els.searchInput.focus(); els.searchInput.select(); }
+  else if (e.key === "a" || e.key === "A") { toggleSelectAllVisible(); }
+  else if (e.key === " " && hoveredCardId) {
+    // Space toggles the hovered card without scrolling.
+    e.preventDefault();
+    const post = visiblePosts().find((p) => p.id === hoveredCardId);
+    if (post) toggleSelect(post.id, !state.selected.has(post.id));
+  }
+  else if (e.key === "d" || e.key === "D") {
+    if (state.selected.size) downloadSelected();
+  }
 });
 
 /* ---------------- download single (current item in modal) ---------------- */
@@ -446,21 +573,7 @@ async function downloadOneFile(item, post) {
 }
 
 /* ---------------- bulk download (ZIP) ---------------- */
-els.downloadSelBtn.addEventListener("click", () => {
-  const chosen = state.posts.filter((p) => state.selected.has(p.id));
-  const flat = [];
-  chosen.forEach((p) => {
-    p.items.forEach((c) => flat.push({
-      id: c.id,
-      type: p.type,
-      media_url: c.media_url,
-      source_url: p.source_url,
-      caption: p.caption,
-      timestamp: p.timestamp,
-    }));
-  });
-  if (flat.length) startBulk(flat, state.username);
-});
+els.downloadSelBtn.addEventListener("click", () => downloadSelected());
 els.downloadAllBtn.addEventListener("click", async () => {
   // Use everything currently loaded.
   if (state.posts.length === 0) return;
@@ -516,3 +629,4 @@ function sanitize(s) { return String(s || "media").replace(/[^\w.-]/g, "_"); }
 /* ---------------- init ---------------- */
 initTheme();
 updateBulkBar();
+refreshCookieStatus();
