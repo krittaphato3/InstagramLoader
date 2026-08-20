@@ -19,12 +19,15 @@ from fastapi.staticfiles import StaticFiles
 
 from .jobs import jobs
 from .config import ALLOWED_ORIGINS, DOWNLOAD_DIR
-from .errors import AppError
+from .downloader import download_item
+from .errors import AppError, DownloadError
 from .models import (
+    DownloadItem,
     DownloadRequest,
     DownloadResponse,
     ResolveRequest,
     ResolveResponse,
+    SingleDownloadRequest,
     StatusResponse,
 )
 from .resolver import resolver
@@ -62,6 +65,24 @@ def start_download(body: DownloadRequest) -> DownloadResponse:
     """Create a download job for the selected items and return its id."""
     job_id = jobs.create(body.items, body.username)
     return DownloadResponse(job_id=job_id, status="started")
+
+
+@app.post("/api/download/single")
+def download_single(body: SingleDownloadRequest):
+    """Download ONE media item and return it directly as a file."""
+    target_dir = Path(DOWNLOAD_DIR) / "single"
+    item = DownloadItem(
+        id=body.id,
+        type=body.type,
+        media_url=body.media_url,
+        timestamp=body.timestamp,
+    )
+    try:
+        outcome = download_item(item, target_dir)
+    except DownloadError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    filename = Path(outcome["filepath"]).name
+    return FileResponse(outcome["filepath"], filename=filename, media_type="application/octet-stream")
 
 
 @app.get("/api/status/{job_id}", response_model=StatusResponse)

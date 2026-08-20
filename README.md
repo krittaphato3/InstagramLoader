@@ -37,14 +37,16 @@ app/
   config.py        # env-driven settings (download dir, CORS, timeouts)
   errors.py        # typed, user-facing error classes
   models.py        # Pydantic request/response models (the API contract)
-  resolver.py      # input classification + public media resolution
+  resolver.py      # input classification + public media resolution (instaloader + fallbacks)
   downloader.py    # per-item download, folder tree, manifest, zip
   jobs.py          # background job manager + progress state
   main.py          # FastAPI app, routes, static mounting
 front/
-  index.html       # landing page
+  index.html       # Instagram-style UI (navbar, profile, grid, modal viewer)
   styles.css       # UI styling (light + dark mode)
-  app.js           # fetch, grid, filters, selection, polling
+  app.js           # search, profile, tabs, selection, viewer, downloads
+tests/
+  test_resolver.py # embed-payload + resolver unit tests
 run.py             # dev entrypoint: uvicorn
 requirements.txt
 .env.example
@@ -55,10 +57,11 @@ downloads/         # created at runtime (gitignored)
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| POST | `/api/resolve` | Detect input type, list available public media |
-| POST | `/api/download` | Start a download job for selected items |
+| POST | `/api/resolve` | Resolve a username/link → profile info + media items + stories |
+| POST | `/api/download` | Start a bulk download job for selected items |
 | GET  | `/api/status/{job_id}` | Poll job progress + completion |
 | GET  | `/api/download/{job_id}/zip` | Download the generated ZIP |
+| POST | `/api/download/single` | Download one item as a file (modal "Download this media") |
 
 ### `POST /api/resolve`
 ```json
@@ -67,10 +70,16 @@ downloads/         # created at runtime (gitignored)
 ```json
 {
   "input_type": "post | reel | profile | username",
-  "username": "username if known",
-  "items": [ { "id", "type", "thumbnail_url", "media_url", "caption", "timestamp", "source_url" } ]
+  "username": "username",
+  "profile": { "username", "full_name", "bio", "followers", "following", "post_count", "profile_pic_url", "is_private" },
+  "items": [ { "id", "type", "thumbnail_url", "media_url", "caption", "timestamp", "source_url", "likes", "comments", "is_video" } ],
+  "stories": [ "...same item shape..." ],
+  "stories_status": "ok | none | login_required | unavailable"
 }
 ```
+Media `type` is `post`, `reel`, or `story`. Sidecar (carousel) posts expand into
+one item per child. Stories require login on Instagram and — per compliance —
+the app reports `stories_status: "login_required"` rather than bypassing it.
 
 ### `POST /api/download`
 ```json

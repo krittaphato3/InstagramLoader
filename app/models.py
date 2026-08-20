@@ -44,6 +44,22 @@ class ItemOut(BaseModel):
     caption: Optional[str] = None
     timestamp: Optional[str] = None
     source_url: Optional[str] = None
+    likes: Optional[int] = None
+    comments: Optional[int] = None
+    is_video: Optional[bool] = None
+
+
+class ProfileInfo(BaseModel):
+    """Instagram-style profile header data (avatar, stats, bio)."""
+
+    username: str
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
+    followers: Optional[int] = None
+    following: Optional[int] = None
+    post_count: Optional[int] = None
+    profile_pic_url: Optional[str] = None
+    is_private: bool = False
 
 
 class ResolveResponse(BaseModel):
@@ -51,7 +67,10 @@ class ResolveResponse(BaseModel):
 
     input_type: InputType
     username: Optional[str] = None
+    profile: Optional[ProfileInfo] = None
     items: List[ItemOut] = Field(default_factory=list)
+    stories: List[ItemOut] = Field(default_factory=list)
+    stories_status: Optional[str] = None  # "ok" | "login_required" | "none" | "unavailable"
 
 
 class DownloadItem(BaseModel):
@@ -77,6 +96,16 @@ class DownloadResponse(BaseModel):
 
     job_id: str
     status: str = "started"
+
+
+class SingleDownloadRequest(BaseModel):
+    """POST /api/download/single body: download one item as a file."""
+
+    id: str
+    type: MediaType
+    media_url: Optional[str] = None
+    timestamp: Optional[str] = None
+    is_video: Optional[bool] = None
 
 
 class StatusResponse(BaseModel):

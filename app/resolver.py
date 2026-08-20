@@ -43,7 +43,7 @@ from .errors import (
     RateLimitError,
     UnsupportedURLError,
 )
-from .models import InputType, ItemOut, MediaType, ResolveResponse
+from .models import InputType, ItemOut, MediaType, ProfileInfo, ResolveResponse
 
 # Match /p/ABC123 or /reel/ABC123 (also /reels/).
 _SHORTCODE_RE = re.compile(r"/(?:p|reel|reels)/([A-Za-z0-9_-]{3,})")
@@ -182,15 +182,26 @@ class Resolver:
                 return ResolveResponse(
                     input_type=cls.kind,
                     username=post.owner_username or cls.username,
+                    profile=self._profile_info_from_post(post),
                     items=items,
+                    stories_status="none",
                 )
+
             profile = instaloader.Profile.from_username(loader.context, cls.username or "")
             items = []
             for post in profile.get_posts():
                 items.extend(self._post_to_items(post, MediaType.post))
-                if len(items) >= 24:
+                if len(items) >= 36:
                     break
-            return ResolveResponse(input_type=cls.kind, username=cls.username, items=items)
+            stories, stories_status = self._resolve_stories(loader, profile)
+            return ResolveResponse(
+                input_type=cls.kind,
+                username=cls.username,
+                profile=self._profile_info(profile),
+                items=items,
+                stories=stories,
+                stories_status=stories_status,
+            )
         except instaloader.LoginRequiredException as exc:
             raise LoginRequiredError() from exc
         except instaloader.PrivateProfileNotFollowedException as exc:
@@ -207,6 +218,63 @@ class Resolver:
             # Any other library error (e.g. malformed page) — try public APIs.
             return None
 
+    # ------------------------------------------------------------------ #
+    # Stories
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _resolve_stories(loader, profile):
+        """Return (story_items, status). Story access usually needs login."""
+        try:
+            stories = list(loader.get_stories(userids=[profile.userid]))
+        except instaloader.LoginRequiredException as exc:
+            return [], "login_required"
+        except instaloader.InstaloaderException as exc:
+            return [], "unavailable"
+
+        items = []
+        for story in stories:
+            for it in story.get_items():
+                media = it.video_url or it.url
+                items.append(
+                    ItemOut(
+                        id=str(it.mediaid),
+                        type=MediaType.story,
+                        thumbnail_url=it.url,
+                        media_url=media,
+                        caption=None,
+                        timestamp=it.date_utc.isoformat() if it.date_utc else None,
+                        is_video=bool(getattr(it, "video_url", None)) or it.is_video,
+                    )
+                )
+        return items, ("ok" if items else "none")
+
+    # ------------------------------------------------------------------ #
+    # Profile info
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _profile_info(profile) -> ProfileInfo:
+        return ProfileInfo(
+            username=profile.username,
+            full_name=getattr(profile, "full_name", None),
+            bio=getattr(profile, "biography", None),
+            followers=getattr(profile, "followers", None),
+            following=getattr(profile, "followees", None),
+            post_count=getattr(profile, "mediacount", None),
+            profile_pic_url=getattr(profile, "profile_pic_url", None),
+            is_private=getattr(profile, "is_private", False),
+        )
+
+    @staticmethod
+    def _profile_info_from_post(post) -> Optional[ProfileInfo]:
+        try:
+            return ProfileInfo(
+                username=post.owner_username,
+                full_name=post.owner_profile.full_name if post.owner_profile else None,
+                profile_pic_url=post.owner_profile.profile_pic_url if post.owner_profile else None,
+            )
+        except Exception:
+            return None
+
     @staticmethod
     def _post_to_items(post, default_type: MediaType) -> List[ItemOut]:
         """Convert one instaloader Post (or its sidecar children) to items."""
@@ -214,6 +282,8 @@ class Resolver:
         caption = post.caption
         timestamp = post.date_utc.isoformat() if post.date_utc else None
         source = f"https://www.instagram.com/p/{post.shortcode}/" if post.shortcode else None
+        likes = getattr(post, "likes", None)
+        comments = getattr(post, "comments", None)
 
         # Sidecar (multi-image/video post) -> one item per child.
         if getattr(post, "typename", "") == "GraphSidecar":
@@ -231,6 +301,9 @@ class Resolver:
                         caption=caption if idx == 1 else None,
                         timestamp=timestamp,
                         source_url=source,
+                        likes=likes if idx == 1 else None,
+                        comments=comments if idx == 1 else None,
+                        is_video=bool(node.is_video),
                     )
                 )
             return items
@@ -246,6 +319,9 @@ class Resolver:
                 caption=caption,
                 timestamp=timestamp,
                 source_url=source,
+                likes=likes,
+                comments=comments,
+                is_video=bool(getattr(post, "is_video", False)),
             )
         ]
 
