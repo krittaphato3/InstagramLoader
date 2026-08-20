@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Instagram Media Downloader</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header>
+      <h1>Instagram Media Downloader</h1>
+      <label class="switch">
+        <input type="checkbox" id="darkToggle" />
+        <span>Dark mode</span>
+      </label>
+    </header>
+
+    <!-- Input -->
+    <section class="input-row">
+      <input
+        id="urlInput"
+        type="text"
+        placeholder="Paste a post link, reel link, profile link, or username…"
+        autocomplete="off"
+      />
+      <button id="fetchBtn" class="primary">Fetch Media</button>
+    </section>
+
+    <!-- Loading + error + empty states -->
+    <div id="statusArea"></div>
+
+    <!-- Toolbar (selection + filters), shown when items exist -->
+    <section id="toolbar" class="toolbar" hidden>
+      <div class="filters">
+        <button class="chip is-active" data-filter="all">All</button>
+        <button class="chip" data-filter="post">Posts</button>
+        <button class="chip" data-filter="reel">Reels</button>
+        <button class="chip" data-filter="story">Stories</button>
+      </div>
+      <div class="actions">
+        <button id="selectAll">Select All</button>
+        <button id="deselectAll">Deselect All</button>
+        <button id="selectPosts">Select Posts</button>
+        <button id="selectReels">Select Reels</button>
+        <button id="selectStories">Select Stories</button>
+      </div>
+      <span id="selectedCount">0 items selected</span>
+      <button id="downloadBtn" class="primary">Download Selected</button>
+    </section>
+
+    <!-- Media grid -->
+    <section id="grid" class="grid" hidden></section>
+
+    <!-- Progress overlay -->
+    <div id="progressOverlay" class="overlay" hidden>
+      <progress id="progressBar" max="100" value="0"></progress>
+      <p id="progressText">Starting…</p>
+    </div>
+
+    <!-- Toast container -->
+    <div id="toasts"></div>
+  </main>
+
+  <footer>
+    <p class="disclaimer">
+      Use this tool only for content you own or have permission to download.
+      Respect copyright and Instagram’s terms.
+    </p>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
