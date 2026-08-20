@@ -110,7 +110,7 @@ function applyResolve(data) {
   els.profileView.hidden = false;
   const p = data.profile;
   if (p) {
-    els.profileAvatar.src = p.profile_pic_url || "";
+    els.profileAvatar.src = (p.profile_pic_url ? prox(p.profile_pic_url) : "");
     els.profileUsername.textContent = p.username || state.username || "";
     els.statPosts.textContent = fmt(p.post_count);
     els.statFollowers.textContent = fmt(p.followers);
@@ -142,6 +142,15 @@ function fmt(n) {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
   if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
   return String(n);
+}
+
+// Instagram's CDN sends Cross-Origin-Resource-Policy: same-origin, which makes
+// the browser block direct <img>/<video> loading (NotSameOrigin). Route all
+// media through our backend proxy so it renders in the page.
+function prox(url) {
+  if (!url) return "";
+  if (url.startsWith("/api/proxy")) return url;
+  return `/api/proxy?url=${encodeURIComponent(url)}`;
 }
 
 /* ---------------- Tab filtering ---------------- */
@@ -195,8 +204,15 @@ els.selectAllCb.addEventListener("change", () => {
 function renderGrid() {
   const items = visibleItems();
   els.grid.innerHTML = "";
-  if (items.length === 0) { els.grid.hidden = true; return; }
+  if (items.length === 0) {
+    els.grid.hidden = true;
+    if (state.tab === "story" && state.stories.length === 0) {
+      setStatus("info", emptyStateText());
+    }
+    return;
+  }
   els.grid.hidden = false;
+  if (state.tab === "story") clearStatus();
 
   for (const it of items) {
     const card = document.createElement("div");
@@ -205,7 +221,7 @@ function renderGrid() {
 
     const img = document.createElement("img");
     img.loading = "lazy";
-    if (it.thumbnail_url) img.src = it.thumbnail_url;
+    if (it.thumbnail_url) img.src = prox(it.thumbnail_url);
     else img.src = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='300' height='300'><rect width='100%25' height='100%25' fill='%23ccc'/></svg>";
     card.appendChild(img);
 
@@ -255,15 +271,22 @@ function renderModal() {
   const it = modalState.item;
   if (!it) return;
   els.modalMedia.innerHTML = "";
-  if (it.type === "story" || it.is_video || (it.media_url || "").includes(".mp4") || String((it.media_url || "")).startsWith("https://scontent")) {
-    if (it.is_video) {
-      const v = document.createElement("video"); v.src = it.media_url; v.controls = true; v.autoplay = true; v.muted = false;
-      els.modalMedia.appendChild(v);
-    } else {
-      const img = document.createElement("img"); img.src = it.media_url || it.thumbnail_url; els.modalMedia.appendChild(img);
-    }
+  const isVideo = it.is_video || /\.(mp4|webm|mov)(\?|$)/.test(String(it.media_url || ""));
+  if (isVideo) {
+    const v = document.createElement("video");
+    v.src = prox(it.media_url);
+    v.controls = true;
+    v.autoplay = true;
+    v.muted = false;
+    v.style.maxWidth = "100%";
+    v.style.maxHeight = "62vh";
+    els.modalMedia.appendChild(v);
   } else {
-    const img = document.createElement("img"); img.src = it.media_url || it.thumbnail_url; els.modalMedia.appendChild(img);
+    const img = document.createElement("img");
+    img.src = prox(it.media_url || it.thumbnail_url);
+    img.style.maxWidth = "100%";
+    img.style.maxHeight = "62vh";
+    els.modalMedia.appendChild(img);
   }
   els.modalInfo.innerHTML = `
     <span><b>${it.type}</b></span>
@@ -353,6 +376,16 @@ async function pollJob(jobId) {
 }
 
 /* ---------------- Errors ---------------- */
+function emptyStateText() {
+  if (state.tab === "story") {
+    return "No stories are currently available. Instagram requires login to view someone's stories — this app never bypasses that.";
+  }
+  if (state.tab === "reel") {
+    return "No reels found for this account.";
+  }
+  return "No media found for this filter.";
+}
+
 function friendly(msg) {
   if (/requires login|login/i.test(msg)) return "This content requires login to view.";
   if (/private/i.test(msg)) return "This account is private or unavailable.";

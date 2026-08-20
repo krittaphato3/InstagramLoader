@@ -292,10 +292,17 @@ class Resolver:
                 media = (node.video_url or node.display_url) if node.is_video else (node.display_url)
                 if not media:
                     continue
+                # On Instagram, video children of a carousel are still viewed
+                # as videos; surface them under Reels so they are not hidden.
+                child_type = (
+                    MediaType.reel
+                    if (node.is_video and default_type is MediaType.post)
+                    else default_type
+                )
                 items.append(
                     ItemOut(
                         id=f"{base_id}_{idx}",
-                        type=default_type,
+                        type=child_type,
                         thumbnail_url=node.display_url,
                         media_url=media,
                         caption=caption if idx == 1 else None,
@@ -309,11 +316,15 @@ class Resolver:
             return items
 
         # Single image or video.
+        is_video = bool(getattr(post, "is_video", False))
+        # On Instagram, a standalone video post is surfaced under the Reels tab
+        # (a real /reel/ shortcode rather than a picture post).
+        media_type = MediaType.reel if (is_video and default_type is MediaType.post) else default_type
         media = post.video_url or post.url
         return [
             ItemOut(
                 id=base_id,
-                type=default_type,
+                type=media_type,
                 thumbnail_url=post.url,
                 media_url=media,
                 caption=caption,
@@ -321,7 +332,7 @@ class Resolver:
                 source_url=source,
                 likes=likes,
                 comments=comments,
-                is_video=bool(getattr(post, "is_video", False)),
+                is_video=is_video,
             )
         ]
 

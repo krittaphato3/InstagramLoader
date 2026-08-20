@@ -11,14 +11,16 @@ The static frontend lives in ./frontend and is mounted at "/".
 from __future__ import annotations
 
 from pathlib import Path
+from urllib.parse import urlparse
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .jobs import jobs
-from .config import ALLOWED_ORIGINS, DOWNLOAD_DIR
+from .config import ALLOWED_ORIGINS, DOWNLOAD_DIR, REQUEST_TIMEOUT, USER_AGENT
 from .downloader import download_item
 from .errors import AppError, DownloadError
 from .models import (
@@ -104,6 +106,44 @@ def download_zip(job_id: str):
     if not zip_path.exists():
         raise HTTPException(status_code=404, detail="ZIP file is missing.")
     return FileResponse(zip_path, filename=f"instagram_download_{job_id}.zip", media_type="application/zip")
+
+
+@app.get("/api/proxy")
+def proxy(url: str):
+    """Stream a remote media file with no CORP/CORS block.
+
+    Instagram's CDN serves `Cross-Origin-Resource-Policy: same-origin`, so a
+    browser page served from 127.0.0.1 cannot display those images/videos
+    directly (ERR_BLOCKED_BY_RESPONSE.NotSameOrigin). We fetch the media
+    server-side and relay it as the same origin. Only Instagram CDN hosts are
+    allowed, so this is not an open proxy.
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="Missing url.")
+    parsed = urlparse(url)
+    host = (parsed.netloc or "").lower()
+    allowed = host.endswith(".fbcdn.net") or host.endswith(".cdninstagram.com")
+    if not allowed:
+        raise HTTPException(status_code=400, detail="Only Instagram CDN media can be proxied.")
+
+    try:
+        resp = httpx.get(
+            url,
+            timeout=REQUEST_TIMEOUT,
+            follow_redirects=True,
+            headers={"User-Agent": USER_AGENT},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Could not fetch media.") from exc
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Media unavailable.")
+
+    media_type = resp.headers.get("content-type") or "application/octet-stream"
+    return Response(
+        content=resp.content,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 # Expose landing page + static assets last so API routes win.
