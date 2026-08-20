@@ -30,6 +30,11 @@
 
 * { box-sizing: border-box; }
 
+/* Honor the HTML `hidden` attribute even on elements that set display via
+   a class/rule below (e.g. .toolbar display:grid). Without this, elements
+   like the progress overlay show on page load despite being hidden. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;

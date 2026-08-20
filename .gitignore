@@ -17,3 +17,6 @@ downloads/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Playwright browser artifacts (local debugging)
+.playwright-mcp/
