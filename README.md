@@ -9,8 +9,25 @@ Full-stack web app for downloading **public** Instagram posts, reels, and storie
 
 ## Stack
 
-- **Backend:** Python 3.11+, FastAPI, httpx, zipfile (stdlib)
+- **Backend:** Python 3.11+, FastAPI, httpx, instaloader, zipfile (stdlib)
 - **Frontend:** Plain HTML + CSS + JS served by FastAPI (no build step)
+
+## Resolver: how public content is fetched
+
+Resolution tries, in order (all **public / anonymous** — nothing logs in or
+bypasses a login wall):
+
+1. **instaloader** (the spec's preferred public-instagram library) — fetches
+   posts, reels, carousel children, captions, and timestamps anonymously from
+   ordinary residential IPs. Verified working for profiles and single posts.
+2. Official **oEmbed** API (`api.instagram.com/oembed`) — thumbnail/caption.
+3. Public **embed page** (`/p/<code>/embed/`) — parses the
+   `window.__additionalDataLoaded` payload for real `display_url`/`video_url`.
+4. Main page `og:` metas as a last resort.
+
+If Instagram serves a logged-out "log in" shell (common from datacenter/VPN/
+cloud IPs), the app raises a clear `requires login` error instead of bypassing
+it.
 
 ## File layout
 

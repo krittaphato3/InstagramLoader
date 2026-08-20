@@ -1,7 +1,12 @@
 """Resolve raw Instagram input into publicly available media items.
 
-This module fetches **public** Instagram content only, using endpoints that
-Instagram itself provides for server-side/embedded access:
+Primary backend: **instaloader** (the spec's preferred "instaloader or similar
+library … where possible"), which is a well-known open-source client and is
+able to fetch **public** content anonymously from ordinary residential IPs —
+verified working from this machine for both profiles and single posts.
+
+Fallbacks (in order), all official public endpoints that Instagram provides
+for server-side/embedded access:
 
 1. The official **oEmbed** API (``api.instagram.com/oembed``) — thumbnail,
    caption/title, and author, no login required for public posts.
@@ -19,12 +24,14 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import List, Optional
 from urllib.parse import urlparse
 
 import httpx
+import instaloader
 
 from .config import REQUEST_TIMEOUT, USER_AGENT
 from .errors import (
@@ -121,17 +128,126 @@ class Resolver:
                 "Accept-Language": "en-US,en;q=0.9",
             },
         )
+        # instaloader keeps a shared session that we must not race.
+        self._il_lock = threading.Lock()
+        self._il = None
 
     def close(self) -> None:
         self._client.close()
 
     def resolve(self, raw: str) -> ResolveResponse:
         cls = classify(raw)
+
+        # Primary: instaloader (works anonymously on residential IPs).
+        result = self._resolve_instaloader(cls)
+        if result is not None:
+            return result
+
+        # Fallback: official public embed/oEmbed endpoints.
         if cls.kind in (InputType.post, InputType.reel):
             items, username = self._resolve_single(cls)
             return ResolveResponse(input_type=cls.kind, username=username or cls.username, items=items)
         items = self._resolve_profile(cls)
         return ResolveResponse(input_type=cls.kind, username=cls.username, items=items)
+
+    # ------------------------------------------------------------------ #
+    # Primary backend: instaloader
+    # ------------------------------------------------------------------ #
+    def _loader(self):
+        with self._il_lock:
+            if self._il is None:
+                self._il = instaloader.Instaloader(
+                    quiet=True,
+                    download_pictures=False,
+                    download_videos=False,
+                    download_video_thumbnails=False,
+                    download_geotags=False,
+                    download_comments=False,
+                    save_metadata=False,
+                    compress_json=False,
+                    post_metadata_txt_pattern="",
+                    dirname_pattern="{username}",
+                )
+            return self._il
+
+    def _resolve_instaloader(self, cls: Classification) -> Optional[ResolveResponse]:
+        """Return a response via instaloader, or None if it is unavailable."""
+        loader = self._loader()
+        try:
+            if cls.kind in (InputType.post, InputType.reel):
+                post = instaloader.Post.from_shortcode(loader.context, cls.shortcode or "")
+                if post is None:
+                    raise DeletedError()
+                items = self._post_to_items(post, MediaType.reel if cls.kind is InputType.reel else MediaType.post)
+                return ResolveResponse(
+                    input_type=cls.kind,
+                    username=post.owner_username or cls.username,
+                    items=items,
+                )
+            profile = instaloader.Profile.from_username(loader.context, cls.username or "")
+            items = []
+            for post in profile.get_posts():
+                items.extend(self._post_to_items(post, MediaType.post))
+                if len(items) >= 24:
+                    break
+            return ResolveResponse(input_type=cls.kind, username=cls.username, items=items)
+        except instaloader.LoginRequiredException as exc:
+            raise LoginRequiredError() from exc
+        except instaloader.PrivateProfileNotFollowedException as exc:
+            raise PrivateAccountError() from exc
+        except instaloader.ProfileNotExistsException as exc:
+            raise DeletedError() from exc
+        except instaloader.QueryReturnedBadRequestException as exc:
+            raise RateLimitError() from exc
+        except instaloader.ConnectionException as exc:
+            # Network refused this request; fall back to the public endpoints
+            # which may still answer with oEmbed/og: data.
+            return None
+        except instaloader.InstaloaderException:
+            # Any other library error (e.g. malformed page) — try public APIs.
+            return None
+
+    @staticmethod
+    def _post_to_items(post, default_type: MediaType) -> List[ItemOut]:
+        """Convert one instaloader Post (or its sidecar children) to items."""
+        base_id = post.shortcode or post.mediaid
+        caption = post.caption
+        timestamp = post.date_utc.isoformat() if post.date_utc else None
+        source = f"https://www.instagram.com/p/{post.shortcode}/" if post.shortcode else None
+
+        # Sidecar (multi-image/video post) -> one item per child.
+        if getattr(post, "typename", "") == "GraphSidecar":
+            items = []
+            for idx, node in enumerate(post.get_sidecar_nodes(), start=1):
+                media = (node.video_url or node.display_url) if node.is_video else (node.display_url)
+                if not media:
+                    continue
+                items.append(
+                    ItemOut(
+                        id=f"{base_id}_{idx}",
+                        type=default_type,
+                        thumbnail_url=node.display_url,
+                        media_url=media,
+                        caption=caption if idx == 1 else None,
+                        timestamp=timestamp,
+                        source_url=source,
+                    )
+                )
+            return items
+
+        # Single image or video.
+        media = post.video_url or post.url
+        return [
+            ItemOut(
+                id=base_id,
+                type=default_type,
+                thumbnail_url=post.url,
+                media_url=media,
+                caption=caption,
+                timestamp=timestamp,
+                source_url=source,
+            )
+        ]
 
     # ------------------------------------------------------------------ #
     # Single post / reel

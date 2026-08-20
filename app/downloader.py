@@ -69,8 +69,11 @@ def download_item(item: DownloadItem, target_dir: Path) -> Dict[str, str]:
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "")
             ext = _extension(item, content_type)
-            stamp = safe_filename((item.timestamp or "")[:12], fallback="date")
-            filename = f"{safe_filename(item.id, 'item')}_{stamp}.{ext}"
+            stamp = ""
+            if item.timestamp:
+                # ISO timestamp -> "2026-03-06_11-01-34" (no colons, no tz).
+                stamp = (item.timestamp[:19] or "").replace("T", "_").replace(":", "-")
+            filename = f"{safe_filename(item.id, 'item')}_{safe_filename(stamp, 'date')}.{ext}"
             filepath = target_dir / filename
             filepath.parent.mkdir(parents=True, exist_ok=True)
             with open(filepath, "wb") as fh:
